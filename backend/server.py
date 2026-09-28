@@ -1566,7 +1566,10 @@ async def tts_random_preview(lang: Optional[str] = Query("it")):
 
 
 # ---------------------------------------------------------------------------
+from auth import create_auth_router, ensure_auth_indexes
+
 app.include_router(api_router)
+app.include_router(create_auth_router(db))
 
 app.add_middleware(
     CORSMiddleware,
@@ -1588,6 +1591,7 @@ logging.basicConfig(
 
 @app.on_event("startup")
 async def startup_event():
+    await ensure_auth_indexes(db)
     logger.info("Reclassified legacy Curiosità records: %s", await migrate_curiosita(db, CATEGORIES))
     await ensure_seed()
     # Asset sync (copertine, artwork, audio) può richiedere minuti in un ambiente

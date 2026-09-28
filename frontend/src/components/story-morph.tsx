@@ -12,7 +12,7 @@ import { StyleSheet, View, useWindowDimensions } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { LinearGradient } from "expo-linear-gradient";
 import Ionicons from "@react-native-vector-icons/ionicons";
-import Animated, { Easing, Extrapolation, interpolate, runOnJS, useAnimatedStyle, useSharedValue, withTiming } from "react-native-reanimated";
+import Animated, { Easing, Extrapolation, interpolate, runOnJS, useAnimatedReaction, useAnimatedStyle, useSharedValue, withTiming } from "react-native-reanimated";
 
 import { StoryPreview } from "@/src/api";
 import { makeStyles, spacing, typography, useTheme, withAlpha } from "@/src/theme";
@@ -29,8 +29,17 @@ import { useMorphHost } from "./morph-host";
 
 export type MorphRect = SheetRect;
 
-export const MORPH_DURATION = 720;
-export const MORPH_EASING = Easing.inOut(Easing.cubic);
+export const MORPH_DURATION = 640;
+// Decelerazione decisa e continua (ease-out quintico): niente coda quasi ferma
+// alla fine, che faceva sembrare la transizione "bloccata" prima dello scambio.
+export const MORPH_EASING = Easing.bezier(0.22, 1, 0.36, 1);
+// Quota oltre la quale il fondo del livello è opaco: da qui il lettore vero può
+// montarsi sotto, invisibile, mentre l'animazione continua sul thread UI.
+const COMMIT_AT = 0.6;
+// Dissolvenza d'ingresso del livello quando si chiude da un capitolo (la
+// schermata sotto non è la presentazione): prima si torna alla copertina, poi
+// tutto rientra nella card.
+const FADE_IN_MS = 200;
 // Geometria della card Home (home-story-card): padding di badge e titolo,
 // larghezza del tasto cuffie (44 + gap 10), raggio della card e della copertina.
 const CARD_PAD = 16, CHIP_INSET = 14, CHIP_H = 28, LISTEN_W = 54, CARD_RADIUS = 19, COVER_RADIUS = 22;
@@ -38,7 +47,7 @@ const CLAMP = Extrapolation.CLAMP;
 const noop = () => {};
 const lerp = (p: number, a: number, b: number) => { "worklet"; return a + (b - a) * p; };
 
-export function StoryMorph({ story, from, premium, ready, onCommit, direction = "open", offsetX = 0 }: {
+export function StoryMorph({ story, from, premium, ready, onCommit, direction = "open", offsetX = 0, fadeIn = false }: {
   story: StoryPreview;
   /** Cornice della card nella Home (coordinate finestra). */
   from: MorphRect;
@@ -51,6 +60,8 @@ export function StoryMorph({ story, from, premium, ready, onCommit, direction = 
   direction?: "open" | "close";
   /** Chiusura da swipe: spostamento orizzontale della schermata al rilascio, riassorbito durante il ritorno. */
   offsetX?: number;
+  /** Chiusura da un capitolo: il livello (presentazione) compare in dissolvenza prima di rientrare nella card. */
+  fadeIn?: boolean;
 }) {
   const styles = useStyles();
   const { colors } = useTheme();
@@ -60,6 +71,7 @@ export function StoryMorph({ story, from, premium, ready, onCommit, direction = 
   const host = useMorphHost();
   const closing = direction === "close";
   const p = useSharedValue(closing ? 1 : 0);
+  const veil = useSharedValue(closing && fadeIn ? 0 : 1);
   const still = useSharedValue(0);
 
   // Stessa geometria della presentazione del lettore (deep-dive/[id]).
@@ -68,7 +80,11 @@ export function StoryMorph({ story, from, premium, ready, onCommit, direction = 
   const coverTop = insets.top + spacing.lg;
   const pageBottom = insets.bottom + spacing.lg;
   const [sheetH, setSheetH] = useState(430);
-  const cardH = Math.max(150, Math.min(Math.round(cardW * 1.02), winH - coverTop - pageBottom - sheetH));
+  // La scheda è a misura: le mete di copertina, titolo e griglia sono definitive
+  // (la card non cambia più altezza) e solo allora la corsa può partire.
+  const [sheetStable, setSheetStable] = useState(false);
+  const cardHFor = (s: number) => Math.max(150, Math.min(Math.round(cardW * 1.02), winH - coverTop - pageBottom - s));
+  const cardH = cardHFor(sheetH);
   const to: MorphRect = { x: (winW - columnW) / 2 + spacing.xl, y: coverTop, width: cardW, height: cardH };
 
   // Dove atterrano titolo e griglia: misurati sui segnaposto della scheda.
@@ -91,9 +107,10 @@ export function StoryMorph({ story, from, premium, ready, onCommit, direction = 
   const coverShift = { x: from.x + from.width / 2 - (to.x + to.width / 2), y: from.y + from.height / 2 - (to.y + to.height / 2) };
   const coverScale = { x: from.width / to.width, y: from.height / to.height };
 
-  const measured = !!titleTo && !!gridTo && cardTitleH > 0;
+  const measured = !!titleTo && !!gridTo && cardTitleH > 0 && sheetStable;
   const [animDone, setAnimDone] = useState(false);
   const [dataReady, setDataReady] = useState(false);
+  const [pastCommit, setPastCommit] = useState(false);
   const started = useRef(false);
   const committed = useRef(false);
   useEffect(() => { if (ready) ready.then(() => setDataReady(true), () => setDataReady(true)); else setDataReady(true); }, [ready]);
@@ -103,30 +120,47 @@ export function StoryMorph({ story, from, premium, ready, onCommit, direction = 
     started.current = true;
     p.value = withTiming(1, { duration: MORPH_DURATION, easing: MORPH_EASING }, (done) => { if (done) runOnJS(setAnimDone)(true); });
   }, [closing, measured, p]);
+  // Il fondo è opaco da COMMIT_AT: il lettore si monta sotto mentre la copertina
+  // finisce di posarsi (l'animazione gira sul thread UI, il montaggio su JS).
+  useAnimatedReaction(
+    () => p.value >= COMMIT_AT,
+    (past, prev) => { if (past && !prev) runOnJS(setPastCommit)(true); },
+    [],
+  );
   useEffect(() => {
-    if (closing || !animDone || !dataReady || committed.current) return;
+    if (closing || !pastCommit || !dataReady || committed.current) return;
     committed.current = true;
     onCommit();
     // Rete di sicurezza: se il lettore non si presenta, il livello non resta a bloccare l'app.
     const timer = setTimeout(host.dismiss, 2500);
     return () => clearTimeout(timer);
-  }, [closing, animDone, dataReady, onCommit, host.dismiss]);
-  // Chiusura: il livello è già identico alla presentazione; sotto si torna alla
-  // Home (senza animazione nativa) e poi tutto rientra nella card.
+  }, [closing, pastCommit, dataReady, onCommit, host.dismiss]);
+  // Scambio solo quando l'animazione è finita E il lettore sotto è disegnato e
+  // stabile (host.ready): mai una dissolvenza a metà corsa, mai un salto.
+  useEffect(() => {
+    if (closing || !animDone || !host.ready) return;
+    host.dismiss();
+  }, [closing, animDone, host.ready, host.dismiss]);
+  // Chiusura: il livello è già identico alla presentazione (o vi si dissolve
+  // sopra, arrivando da un capitolo); sotto si torna alla Home (senza
+  // animazione nativa) e poi tutto rientra nella card.
   useEffect(() => {
     if (!closing || !measured || started.current) return;
     started.current = true;
-    onCommit();
+    const lead = fadeIn ? FADE_IN_MS : 0;
+    if (fadeIn) veil.value = withTiming(1, { duration: FADE_IN_MS, easing: Easing.out(Easing.quad) });
+    const commit = setTimeout(onCommit, lead);
     const timer = setTimeout(() => {
       p.value = withTiming(0, { duration: MORPH_DURATION, easing: MORPH_EASING }, (done) => { if (done) runOnJS(host.clear)(); });
-    }, 80);
-    const safety = setTimeout(host.clear, MORPH_DURATION + 1500);
-    return () => { clearTimeout(timer); clearTimeout(safety); };
-  }, [closing, measured, onCommit, p, host.clear]);
+    }, lead + 80);
+    const safety = setTimeout(host.clear, lead + MORPH_DURATION + 1500);
+    return () => { clearTimeout(commit); clearTimeout(timer); clearTimeout(safety); };
+  }, [closing, measured, fadeIn, onCommit, p, veil, host.clear]);
   // In chiusura titolo e griglia restano quelli della scheda finché non si sa
   // dove stanno: poi, nello stesso istante, passano agli elementi in movimento.
   const floatingReady = !closing || measured;
 
+  const veilStyle = useAnimatedStyle(() => ({ opacity: veil.value }));
   const slide = useAnimatedStyle(() => ({ transform: [{ translateX: offsetX * p.value }] }));
   const bgStyle = useAnimatedStyle(() => ({ opacity: interpolate(p.value, [0, 0.55], [0, 1], CLAMP) }));
   // Copertina: cornice del lettore che, all'inizio, è schiacciata e spostata
@@ -166,7 +200,7 @@ export function StoryMorph({ story, from, premium, ready, onCommit, direction = 
   }));
 
   return (
-    <View style={StyleSheet.absoluteFill} testID="story-morph">
+    <Animated.View style={[StyleSheet.absoluteFill, veilStyle]} testID="story-morph">
       {/* Fondo del lettore: compare mentre la Home fa spazio. */}
       <Animated.View style={[StyleSheet.absoluteFill, bgStyle]} pointerEvents="none">
         <LinearGradient colors={[colors.surface, colors.surfaceDeep]} locations={[0.35, 1]} style={StyleSheet.absoluteFill} />
@@ -183,7 +217,7 @@ export function StoryMorph({ story, from, premium, ready, onCommit, direction = 
             <View style={{ height: cardH, width: cardW, alignSelf: "center" }} />
             <ReaderIntroSheet story={story} compact={compact} reveal={still} onStart={noop} prefix="story-morph" ghost={floatingReady} partsStyle={partsStyle} flat
               listen={premium ? <IntroCtaButton icon="headphones" label={t.audio_listen_short} onPress={noop} testID="story-morph-listen" style={styles.cta} flat /> : null}
-              onLayout={(h) => { if (h !== sheetH) setSheetH(h); }} onTitleRect={setTitleTo} onGridRect={setGridTo} />
+              onLayout={(h) => { if (h !== sheetH) setSheetH(h); if (cardHFor(h) === cardH) setSheetStable(true); }} onTitleRect={setTitleTo} onGridRect={setGridTo} />
           </>)}
         </ReaderPage>
       </View>
@@ -231,7 +265,7 @@ export function StoryMorph({ story, from, premium, ready, onCommit, direction = 
         </Animated.View>
       </Animated.View>
       </Animated.View>
-    </View>
+    </Animated.View>
   );
 }
 

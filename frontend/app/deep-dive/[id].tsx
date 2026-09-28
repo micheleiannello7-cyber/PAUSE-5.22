@@ -1,6 +1,6 @@
 import { useRef, useCallback, useEffect, useState } from "react";
 import {
-  View, StyleSheet, ActivityIndicator, Share, useWindowDimensions, LayoutChangeEvent, Platform,
+  View, StyleSheet, ActivityIndicator, Share, useWindowDimensions, LayoutChangeEvent, Platform, BackHandler,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { LinearGradient } from "expo-linear-gradient";
@@ -65,7 +65,7 @@ export default function DeepDive() {
   const morphHost = useMorphHost();
   useEffect(() => {
     if (morph !== "1") return;
-    const safety = setTimeout(morphHost.dismiss, 1200);
+    const safety = setTimeout(morphHost.dismiss, 1800);
     const pop = setTimeout(() => navigation.setOptions({ animation: "fade", animationDuration: 260 }), 600);
     return () => { clearTimeout(safety); clearTimeout(pop); };
   }, [morph, morphHost.dismiss, navigation]);
@@ -132,7 +132,8 @@ export default function DeepDive() {
   // pieno): si misura la scheda sotto (titolo, intro, griglia, tasti) e la
   // card prende tutto il resto della pagina.
   const [sheetH, setSheetH] = useState(430);
-  const cardH = Math.max(150, Math.min(Math.round(cardW * 1.02), pageH - coverTop - pageBottom - sheetH));
+  const cardHFor = (s: number) => Math.max(150, Math.min(Math.round(cardW * 1.02), pageH - coverTop - pageBottom - s));
+  const cardH = cardHFor(sheetH);
   const cover: CoverFrame = { top: coverTop, left: (winW - columnW) / 2 + spacing.xl, width: cardW, height: cardH, radius: 22 };
   // Quota (nella pagina) del titolo grande: sotto la card, dopo il padding
   // della scheda. Da qui in su la barra col titolo piccolo resta nascosta,
@@ -284,6 +285,15 @@ export default function DeepDive() {
     }
   }, [section, story, lastSection, userId, id, markComplete]);
 
+  // Tasto indietro di sistema (Android): stesso percorso inverso della card,
+  // quando possibile (vedi morphBack più sotto). Hook prima del ritorno anticipato.
+  const morphBackRef = useRef<(x: number) => boolean>(() => false);
+  useEffect(() => {
+    if (Platform.OS !== "android" || morph !== "1") return;
+    const sub = BackHandler.addEventListener("hardwareBackPress", () => morphBackRef.current(0));
+    return () => sub.remove();
+  }, [morph]);
+
   if (isLoading || !story) {
     return (
       <View style={[styles.container, { justifyContent: "center", alignItems: "center" }]}>
@@ -325,16 +335,18 @@ export default function DeepDive() {
   };
 
   const goBack = () => (router.canGoBack() ? router.back() : router.replace("/(tabs)/discover"));
-  // Swipe di ritorno dalla presentazione (arrivati con la transizione dalla card):
-  // niente scivolata, la schermata "rientra" nella card della Home con il
-  // percorso inverso. Dai capitoli, o senza cornice, il ritorno resta quello di sempre.
+  // Ritorno dal lettore (arrivati con la transizione dalla card): niente
+  // scivolata, la schermata "rientra" nella card della Home con il percorso
+  // inverso. Dai capitoli il livello (presentazione) compare prima in
+  // dissolvenza sopra la pagina, poi rientra. Senza cornice: ritorno di sempre.
   const backRect = parseRect(rect);
   const morphBack = (x: number) => {
-    if (morph !== "1" || !backRect || section !== 0 || morphHost.active || !router.canGoBack()) return false;
+    if (morph !== "1" || !backRect || morphHost.active || !router.canGoBack()) return false;
     navigation.setOptions({ animation: "none" });
-    morphHost.show(<StoryMorph direction="close" story={story} from={backRect} premium={isPremium} offsetX={x} onCommit={() => router.back()} />);
+    morphHost.show(<StoryMorph direction="close" story={story} from={backRect} premium={isPremium} offsetX={x} fadeIn={section !== 0} onCommit={() => router.back()} />);
     return true;
   };
+  morphBackRef.current = morphBack;
 
   // Barra in alto: copertina in miniatura, titolo della storia sempre in vista
   // e occhiello in maiuscolo "CAPITOLO 3 DI 7" · "DA RICORDARE". Nell'introduzione
@@ -361,7 +373,7 @@ export default function DeepDive() {
         pointerEvents="none"
       />
       {/* Copertina: card arrotondata dell'apertura, esce verso l'alto con lo scroll. */}
-      <ReaderCoverBackdrop story={story} scrollY={scrollY} frame={cover} />
+      <ReaderCoverBackdrop story={story} scrollY={scrollY} frame={cover} instant={morph === "1"} />
       {/* Schermata finale: sfondo cinematico dell'onboarding, compare solo sull'ultima pagina. */}
       <ReaderEndingBackdrop scrollY={scrollY} pageH={pageHSV} lastSection={lastSection} />
       <StoryAudioProvider key={story.id} storyId={story.id} autoplay={listen === "1" && isPremium}>
@@ -403,10 +415,11 @@ export default function DeepDive() {
               onStart={() => { markTouched(); scrollToSection(1); }}
               listen={isPremium ? <IntroListenButton onListen={openAudio} style={styles.cta} /> : null}
               onLayout={(h) => {
-                if (h !== sheetH) { setSheetH(h); return; }
-                // Arrivo dalla card della Home: la presentazione è disegnata e stabile,
-                // il livello di transizione sopra può dissolversi.
-                if (morph === "1") morphHost.dismiss();
+                if (h !== sheetH) setSheetH(h);
+                // Arrivo dalla card della Home: la presentazione è disegnata e a misura
+                // (la card non cambia più altezza), il livello di transizione sopra può
+                // dissolversi appena finita la sua corsa.
+                if (morph === "1" && cardHFor(h) === cardH) morphHost.markReady();
               }} />
             </>)}
           </ReaderPage>

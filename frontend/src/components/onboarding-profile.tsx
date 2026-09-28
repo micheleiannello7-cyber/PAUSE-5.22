@@ -17,6 +17,7 @@ import { useI18n } from "@/src/i18n";
 import { Gender } from "@/src/api";
 import { radius, spacing, typography, withAlpha } from "@/src/theme";
 import { OnboardingBrand } from "./onboarding-brand";
+import { AuthBlock } from "./auth-block";
 import { ONB } from "./onboarding-palette";
 
 const ARTWORK = require("../../assets/images/onboarding-profile-bg.jpg");
@@ -39,13 +40,14 @@ export const MIN_NAME = 2;
 
 export type ProfileDraft = { name: string; gender: Gender | null; age: number | null };
 
-export function OnboardingProfile({ value, onChange, onBack, onContinue, canContinue, saving }: {
+export function OnboardingProfile({ value, onChange, onBack, onContinue, canContinue, saving, ctaLabel }: {
   value: ProfileDraft;
   onChange: (next: ProfileDraft) => void;
-  onBack: () => void;
+  onBack?: () => void;
   onContinue: () => void;
   canContinue: boolean;
   saving: boolean;
+  ctaLabel?: string;
 }) {
   const { t } = useI18n();
   const insets = useSafeAreaInsets();
@@ -90,9 +92,11 @@ export function OnboardingProfile({ value, onChange, onBack, onContinue, canCont
         >
           {/* Barra alta: freccia indietro a sinistra, logo centrato alla stessa altezza. */}
           <View style={[styles.header, { height: brandHeight }]}>
-            <Pressable onPress={onBack} hitSlop={8} accessibilityRole="button" accessibilityLabel={t.onb_profile_back} testID="onboarding-profile-back" style={({ pressed }) => [styles.back, pressed && styles.pressed]}>
-              <Ionicons name="arrow-back" size={22} color={ONB.text} />
-            </Pressable>
+            {onBack ? (
+              <Pressable onPress={onBack} hitSlop={8} accessibilityRole="button" accessibilityLabel={t.onb_profile_back} testID="onboarding-profile-back" style={({ pressed }) => [styles.back, pressed && styles.pressed]}>
+                <Ionicons name="arrow-back" size={22} color={ONB.text} />
+              </Pressable>
+            ) : null}
             <OnboardingBrand unit={brandUnit} top={0} />
           </View>
 
@@ -106,6 +110,9 @@ export function OnboardingProfile({ value, onChange, onBack, onContinue, canCont
           </View>
 
           <View style={styles.spacer} />
+
+          {/* Account: Apple (iOS) / Google, oppure riga "connesso come". */}
+          <AuthBlock />
 
           {/* Nome o nickname */}
           <GlassField icon="person-outline" glow={focused} testID="onboarding-profile-name-card">
@@ -168,14 +175,14 @@ export function OnboardingProfile({ value, onChange, onBack, onContinue, canCont
               <LinearGradient colors={[...CTA_BORDER]} start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }} style={styles.ctaBorder}>
                 <LinearGradient colors={[...CTA_FILL]} locations={[0, 0.3, 0.55, 0.8, 1]} start={{ x: 0, y: 0.7 }} end={{ x: 1, y: 0.3 }} style={styles.ctaFill}>
                   <LinearGradient colors={["#FFFFFF38", "#FFFFFF0E", "#FFFFFF00", "#12063A2A"]} locations={[0, 0.28, 0.55, 1]} style={StyleSheet.absoluteFill} />
-                  <Text style={styles.ctaText} testID="onboarding-profile-continue-label">{t.onb_modes_next}</Text>
+                  <Text style={styles.ctaText} testID="onboarding-profile-continue-label">{ctaLabel ?? t.onb_modes_next}</Text>
                   <Ionicons name="arrow-forward" size={22} color={ONB.text} />
                 </LinearGradient>
               </LinearGradient>
             </Pressable>
             {/* Tre indicatori come nel mockup (stesso stile della presentazione); questo è il secondo passo. */}
             <View style={styles.dots} accessible={false} testID="onboarding-profile-dots">
-              {[0, 1, 2].map((i) => <View key={i} testID={`onboarding-profile-dot-${i}`} style={[styles.dot, i === 1 && styles.dotOn]} />)}
+              {[0, 1].map((i) => <View key={i} testID={`onboarding-profile-dot-${i}`} style={[styles.dot, i === 0 && styles.dotOn]} />)}
             </View>
           </View>
 

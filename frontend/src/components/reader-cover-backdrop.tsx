@@ -14,8 +14,10 @@ import { LessonCover } from "./lesson-cover";
 
 export type CoverFrame = { top: number; left: number; width: number; height: number; radius: number };
 
-export function ReaderCoverBackdrop({ story, scrollY, frame }: {
+export function ReaderCoverBackdrop({ story, scrollY, frame, instant = false }: {
   story: Story; scrollY: SharedValue<number>; frame: CoverFrame;
+  /** Arrivo con la transizione dalla card: la foto è già a schermo sopra, niente dissolvenza d'ingresso. */
+  instant?: boolean;
 }) {
   const styles = useStyles();
   const { colors } = useTheme();
@@ -40,7 +42,7 @@ export function ReaderCoverBackdrop({ story, scrollY, frame }: {
       testID="chapter-cover-bg"
     >
       {hasCover ? (
-        <StoryHero story={story} style={StyleSheet.absoluteFill} transition={400} />
+        <StoryHero story={story} style={StyleSheet.absoluteFill} transition={instant ? 0 : 400} />
       ) : (
         <LessonCover color={colors.muted} icon={story.category_icon} iconSize={72} showBadge={false} style={StyleSheet.absoluteFill} />
       )}

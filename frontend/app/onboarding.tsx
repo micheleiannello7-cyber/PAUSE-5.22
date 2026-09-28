@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import { View, Text, ScrollView, ActivityIndicator, Pressable } from "react-native";
 import Animated, { FadeInRight, FadeInLeft, FadeOut, LinearTransition, Easing } from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -21,15 +21,17 @@ import { OnboardingSwipe, SwipeDir } from "@/src/components/onboarding-swipe";
 import { OnboardingToast, OnboardingNotice } from "@/src/components/onboarding-toast";
 import { ONB } from "@/src/components/onboarding-palette";
 import { useI18n } from "@/src/i18n";
+import { useAuth } from "@/src/auth";
 
 type Mode = "stories" | "lessons";
 
-// Fasi: 0 intro · 1 profilo (nome/genere/età) · 2 scelta formato · 3 argomenti.
-const STEPS = 4;
-// Fase test: si parte direttamente dagli argomenti (intro, profilo e scelta
-// formato saltati; i formati restano modificabili dai chip in alto).
+// Fasi: 0 intro · 1 profilo (account + nome/genere/età) · 2 scelta formato · 3 argomenti.
+// Percorso ridotto: profilo (con accesso Google/Apple o ospite) → argomenti.
+// Intro e scelta formato saltati (i formati restano modificabili dai chip in alto).
 // Rimetti a 0 per ripristinare il percorso completo.
-const START_STEP = 3;
+const START_STEP = 1;
+const PROFILE_STEP = 1;
+const TOPICS_STEP = 3;
 const DEFAULT_MODES: Mode[] = ["stories", "lessons"];
 const LAYOUT = LinearTransition.duration(340).easing(Easing.inOut(Easing.cubic));
 const enterFrom = (dir: SwipeDir) => (dir > 0 ? FadeInRight : FadeInLeft).duration(380).easing(Easing.out(Easing.cubic));
@@ -41,11 +43,16 @@ export default function Onboarding() {
   const [dir, setDir] = useState<SwipeDir>(1);
   const [notice, setNotice] = useState<OnboardingNotice | null>(null);
   const [selected, setSelected] = useState<Set<string>>(new Set());
-  const [modes, setModes] = useState<Set<Mode>>(new Set<Mode>(START_STEP >= 2 ? DEFAULT_MODES : []));
+  const [modes, setModes] = useState<Set<Mode>>(new Set<Mode>(DEFAULT_MODES));
   const [saving, setSaving] = useState(false);
   // Passo profilo: tutti i campi sono facoltativi (il nome non è obbligatorio).
   const [profile, setProfile] = useState<ProfileDraft>({ name: "", gender: null, age: null });
   const { t } = useI18n();
+  const auth = useAuth();
+  // Dopo l'accesso, il nome dell'account precompila il nickname (se vuoto).
+  useEffect(() => {
+    if (auth.user?.name) setProfile((p) => (p.name.trim() ? p : { ...p, name: auth.user!.name!.slice(0, 40) }));
+  }, [auth.user]);
   const styles = useStyles();
   const { colors } = useTheme();
   const { data: categories, isLoading, isError, refetch, isFetching } = useQuery({
@@ -79,7 +86,8 @@ export default function Onboarding() {
 
   const canSwipe = (d: SwipeDir) => (d < 0 ? step > START_STEP : step === 0 || canContinue);
   const onSwipe = (d: SwipeDir) => {
-    if (d < 0) { goTo(step - 1); return; }
+    // Dal passo argomenti si torna al profilo (la scelta formato è saltata).
+    if (d < 0) { goTo(step === TOPICS_STEP ? PROFILE_STEP : step - 1); return; }
     if (step === 3) { onContinue(); return; }
     goTo(step + 1);
   };
@@ -127,10 +135,11 @@ export default function Onboarding() {
           <OnboardingProfile
             value={profile}
             onChange={setProfile}
-            onBack={() => goTo(0)}
-            onContinue={() => goTo(2)}
+            onBack={step > START_STEP ? () => goTo(0) : undefined}
+            onContinue={() => goTo(TOPICS_STEP)}
             canContinue
             saving={false}
+            ctaLabel={auth.status === "authenticated" ? t.onb_modes_next : t.auth_guest_cta}
           />
         </Animated.View>
       </View>
@@ -191,8 +200,8 @@ export default function Onboarding() {
       <OnboardingToast notice={notice} bottom={insets.bottom + 132} onHide={() => setNotice(null)} />
 
       <View style={[styles.footer, { paddingBottom: insets.bottom + spacing.md }]}>
-        {STEPS - START_STEP > 1 ? (
-          <PagerDots count={STEPS - START_STEP} index={step - START_STEP} color={ONB.cyan} onSelect={(i) => i + START_STEP < step && goTo(i + START_STEP)} style={styles.dots} testID="onboarding-dots" />
+        {topics ? (
+          <PagerDots count={2} index={1} color={ONB.cyan} onSelect={(i) => i === 0 && goTo(PROFILE_STEP)} style={styles.dots} testID="onboarding-dots" />
         ) : null}
         <Pressable
           onPress={() => {

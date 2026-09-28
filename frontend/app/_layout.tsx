@@ -14,6 +14,7 @@ import { useLoadFonts } from "@/src/utils/fonts";
 import { I18nProvider, useI18n } from "@/src/i18n";
 import { loadPrefs } from "@/src/prefs-sync";
 import { registerLaunch } from "@/src/coach-tips";
+import { AuthProvider } from "@/src/auth";
 
 // prewarm icon fonts on Android Expo Go — preserve original logic
 import Ionicons from "@react-native-vector-icons/ionicons";
@@ -108,9 +109,11 @@ function Root() {
     <GestureHandlerRootView style={{ flex: 1, backgroundColor: colors.surface }}>
       <SafeAreaProvider>
         <QueryClientProvider client={queryClient}>
-          <I18nProvider>
-            <AppStack fontsLoaded={fontsLoaded} />
-          </I18nProvider>
+          <AuthProvider>
+            <I18nProvider>
+              <AppStack fontsLoaded={fontsLoaded} />
+            </I18nProvider>
+          </AuthProvider>
         </QueryClientProvider>
       </SafeAreaProvider>
     </GestureHandlerRootView>

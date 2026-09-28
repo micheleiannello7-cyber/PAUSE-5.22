@@ -46,6 +46,20 @@ export async function getOrCreateUserId(): Promise<string> {
   return id;
 }
 
+// Dopo il login l'app lavora con l'id dell'account (progressi/preferiti legati
+// all'account, non al dispositivo). Al logout si torna a un id ospite nuovo.
+export async function adoptUserId(id: string) {
+  memoryId = id;
+  await withTimeout(AsyncStorage.setItem(USER_KEY, id), () => false);
+}
+
+export async function resetUserId(): Promise<string> {
+  const id = uuid();
+  memoryId = id;
+  await withTimeout(AsyncStorage.setItem(USER_KEY, id), () => false);
+  return id;
+}
+
 export async function isOnboarded(): Promise<boolean> {
   const v = await withTimeout(AsyncStorage.getItem(ONBOARDED_KEY), () => null);
   return v === "1";

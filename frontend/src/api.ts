@@ -16,6 +16,12 @@ export function getApiLang() {
   return currentLang;
 }
 
+// Bearer token dell'account (Google/Apple) — impostato da src/auth.tsx.
+let authToken: string | null = null;
+export function setApiAuthToken(token: string | null) {
+  authToken = token;
+}
+
 // Abort a request that stalls so a flaky connection never traps the UI on a
 // spinner forever (react-query can then retry / surface an error state).
 const REQUEST_TIMEOUT_MS = 15000;
@@ -39,7 +45,11 @@ async function req<T>(path: string, opts?: RequestInit): Promise<T> {
     const res = await fetch(url, {
       ...opts,
       signal: controller.signal,
-      headers: { "Content-Type": "application/json", ...(opts?.headers ?? {}) },
+      headers: {
+        "Content-Type": "application/json",
+        ...(authToken ? { Authorization: `Bearer ${authToken}` } : {}),
+        ...(opts?.headers ?? {}),
+      },
     });
     if (!res.ok) {
       let code: string | undefined;
@@ -219,7 +229,22 @@ export function voiceSampleUrl(voice: VoiceId): string {
   return `${BASE}/api/tts/voice-sample?voice=${voice}&lang=${currentLang}`;
 }
 
+export type AuthUser = {
+  user_id: string;
+  email: string | null;
+  name: string | null;
+  picture: string | null;
+  provider: "google" | "apple" | null;
+};
+export type AuthResult = { session_token: string; user: AuthUser };
+
 export const api = {
+  authSession: (session_id: string) =>
+    req<AuthResult>(`/auth/session`, { method: "POST", body: JSON.stringify({ session_id }) }),
+  authApple: (identity_token: string, full_name: string | null, email: string | null) =>
+    req<AuthResult>(`/auth/apple`, { method: "POST", body: JSON.stringify({ identity_token, full_name, email }) }),
+  authMe: () => req<AuthUser>(`/auth/me`),
+  authLogout: () => req<{ ok: boolean }>(`/auth/logout`, { method: "POST" }),
   categories: () => req<Category[]>("/categories"),
   /** id categoria → URL assoluto del clip hero (~3s), solo per quelle generate. */
   categoryClips: async () => {

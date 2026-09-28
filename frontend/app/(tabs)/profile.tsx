@@ -15,6 +15,7 @@ import { PauseMark } from "@/src/components/pause-logo";
 import { StreakCard } from "@/src/components/streak-card";
 import { GlassSurface, AmbientGlow } from "@/src/components/glass";
 import { useI18n, Lang } from "@/src/i18n";
+import { useAuth } from "@/src/auth";
 
 export default function Profile() {
   const insets = useSafeAreaInsets();
@@ -22,6 +23,7 @@ export default function Profile() {
   const qc = useQueryClient();
   const userId = useUserId();
   const { t, lang, setLang } = useI18n();
+  const auth = useAuth();
   const { isPremium } = usePremium();
   const yearlyPlan = PLANS.find((p) => p.id === "yearly")!;
   const { mode, setMode, accent, setAccent, scheme, colors } = useTheme();
@@ -38,6 +40,15 @@ export default function Profile() {
     await AsyncStorage.removeItem("pause.onboarded.v2");
     router.replace("/onboarding");
   };
+
+  // Esci: chiude la sessione, torna a un id ospite nuovo e riparte dal passo
+  // profilo (dove si può accedere di nuovo). Accedi (ospite): stesso passo.
+  const signOut = async () => {
+    await auth.signOut();
+    qc.clear();
+    router.replace("/onboarding");
+  };
+  const accountName = auth.user?.name || auth.user?.email || t.anon;
 
   const interestsCount = user?.interests.includes("all") ? categories?.length ?? 0 : user?.interests.length ?? 0;
 
@@ -75,8 +86,8 @@ export default function Profile() {
           <PauseMark size={30} />
         </View>
         <View style={{ flex: 1 }}>
-          <Text style={styles.name}>{t.anon}</Text>
-          <Text style={styles.sub}>{user?.completed_story_ids.length ?? 0} {t.stories_completed}</Text>
+          <Text style={styles.name} testID="profile-account-name">{accountName}</Text>
+          <Text style={styles.sub}>{auth.user?.email && auth.user?.name ? `${auth.user.email} · ` : ""}{user?.completed_story_ids.length ?? 0} {t.stories_completed}</Text>
         </View>
       </View>
 
@@ -257,6 +268,22 @@ export default function Profile() {
           <Text style={styles.rowText}>{t.redo_onboarding}</Text>
           <Ionicons name="chevron-forward" size={18} color={colors.muted} />
         </Pressable>
+        {auth.status === "authenticated" ? (
+          <Pressable style={styles.row} onPress={signOut} testID="account-sign-out">
+            <Ionicons name="log-out-outline" size={20} color={colors.onSurface} />
+            <Text style={styles.rowText}>{t.auth_sign_out}</Text>
+            <Ionicons name="chevron-forward" size={18} color={colors.muted} />
+          </Pressable>
+        ) : (
+          <Pressable style={styles.row} onPress={() => router.replace("/onboarding")} testID="account-sign-in">
+            <Ionicons name="log-in-outline" size={20} color={colors.onSurface} />
+            <View style={{ flex: 1 }}>
+              <Text style={styles.rowText}>{t.auth_sign_in}</Text>
+              <Text style={styles.rowHint}>{t.auth_sign_in_hint}</Text>
+            </View>
+            <Ionicons name="chevron-forward" size={18} color={colors.muted} />
+          </Pressable>
+        )}
         <Pressable
           style={[styles.row, styles.rowLast]}
           onPress={() => Alert.alert("PΛUSE", t.about_body)}

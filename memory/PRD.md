@@ -167,7 +167,34 @@ pre-generati (storie, capitoli, copertine, audio TTS) distribuiti dal backend.
 - Stripe / TTS ElevenLabs lasciati disattivati come nella configurazione originale.
 
 
-## Aggiornamento UI (giugno 2026)
+## Account: Google (Emergent Auth) + Apple + Ospite — giugno 2026
+- Richiesta: accesso Google su Android (solo Google), Apple + Google su iOS, ospite ovunque;
+  integrato nel passo profilo dell'onboarding (nickname/genere/età), non in una schermata a parte.
+- Onboarding: `START_STEP = 1` → profilo (con `AuthBlock`) → argomenti (formato saltato, resta nei chip).
+  CTA profilo: "Continua come ospite" (ospite) / "Continua" (connesso). Nome account precompila il nickname.
+- Frontend: `src/auth.tsx` (`AuthProvider`/`useAuth`: loading|authenticated|guest, Google via
+  `auth.emergentagent.com` → `POST /api/auth/session`, Apple via `expo-apple-authentication` →
+  `POST /api/auth/apple`, token in SecureStore/localStorage `pause.session_token`, Bearer in `api.ts`).
+  Dopo il login l'app adotta lo `user_id` dell'account (`adoptUserId`), al logout nuovo id ospite (`resetUserId`).
+  `src/components/auth-block.tsx` (bottoni/"Connesso come"/Esci). Profilo: nome account, riga Accedi/Esci.
+- Backend: `backend/auth.py` (router `/api/auth/*`: session, apple, me, logout; collezioni `users`,
+  `user_sessions` con indici + TTL). `.env`: `APPLE_AUDIENCES` = bundle id + `host.exp.Exponent`.
+  `app.json`: `ios.usesAppleSignIn`, plugin `expo-apple-authentication`.
+- Apple verificabile solo su iPhone reale (non Expo Go web/Android). Test: `test_reports/iteration_1.json`.
+
+## Transizione card Home ↔ lettura più fluida — giugno 2026
+- Problema: alla fine dell'apertura il livello restava fermo finché scattava il timer di sicurezza
+  (il lettore non segnalava mai "pronto" quando la copertina è limitata dal quadrato), poi lo scambio
+  "di colpo"; il ritorno faceva la transizione inversa solo dalla presentazione (swipe), mai dai
+  capitoli né col tasto indietro Android.
+- `story-morph.tsx`: 640ms ease-out quintico; il lettore si monta sotto già a p≥0.6 (fondo opaco);
+  la dissolvenza parte solo quando animazione finita E lettore pronto (`MorphHost.ready/markReady`);
+  partenza solo con scheda a misura (`sheetStable`). Chiusura da capitolo: `fadeIn` (200ms) poi rientro.
+- `deep-dive/[id].tsx`: `markReady` quando la card non cambia più altezza; `morphBack` da ogni sezione;
+  `BackHandler` Android → stesso percorso inverso; copertina senza fade d'ingresso se `morph=1`.
+- Test `test_reports/iteration_2.json` (timeline morph PASS) e `iteration_3.json` (fix hook order:
+  apertura non-morph da URL/liste senza crash). Verifica su dispositivo reale ancora da fare dall'utente.
+
 - Home: rimosso badge inferiore "Hai già letto X storie" (componente eliminato); nuovo contatore compatto nell'header (`home-read-counter`, icona libri 3D + numero da `completed_story_ids`) → tap apre `/read-stories` (riepilogo esistente della sessione). Card storie Home INVARIATE (tentativo di riduzione annullato su richiesta utente).
 - Tab Categorie: griglia a 4 colonne con tessere dense (prop `columns` di CategoryGrid/TopicPicker), tutto in una schermata senza scroll su 390x844. Onboarding non toccato (3 colonne).
 - Onboarding: parte direttamente dagli argomenti (`START_STEP = 3` in app/onboarding.tsx), formati preselezionati entrambi; intro/profilo/formato saltati temporaneamente.
