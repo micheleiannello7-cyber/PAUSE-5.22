@@ -4,7 +4,7 @@
 // La usa il lettore (deep-dive) e, con la stessa identica geometria, la
 // transizione dalla card della Home (story-morph): lì titolo e griglia sono
 // "fantasmi" invisibili che segnano dove atterrano gli elementi in movimento.
-import { ReactNode, useRef } from "react";
+import { ReactNode, useEffect, useRef } from "react";
 import { LayoutChangeEvent, Text, View, ViewStyle } from "react-native";
 import { LinearGradient } from "expo-linear-gradient";
 import Animated, { AnimatedStyle, SharedValue, useAnimatedStyle } from "react-native-reanimated";
@@ -20,7 +20,7 @@ import { READER_MAX_W } from "./reader-section";
 export type SheetRect = { x: number; y: number; width: number; height: number };
 
 export function ReaderIntroSheet({
-  story, compact, reveal, onStart, listen, onLayout, prefix = "deep-dive", ghost = false, partsStyle, onTitleRect, onGridRect,
+  story, compact, reveal, onStart, listen, onLayout, prefix = "deep-dive", ghost = false, partsStyle, onTitleRect, onGridRect, remeasure,
 }: {
   story: StoryPreview; compact: number; reveal: SharedValue<number>; onStart: () => void; listen: ReactNode;
   onLayout: (height: number) => void; prefix?: string;
@@ -28,6 +28,8 @@ export function ReaderIntroSheet({
   ghost?: boolean; partsStyle?: AnimatedStyle<ViewStyle>;
   /** Posizione (coordinate finestra) di titolo e griglia, riletta a ogni layout della scheda. */
   onTitleRect?: (rect: SheetRect) => void; onGridRect?: (rect: SheetRect) => void;
+  /** Quando cambia, titolo e griglia vengono rimisurati (la scheda può spostarsi senza un nuovo onLayout). */
+  remeasure?: unknown;
 }) {
   const styles = useStyles();
   const { colors } = useTheme();
@@ -36,12 +38,21 @@ export function ReaderIntroSheet({
   const titleRef = useRef<View>(null);
   const gridRef = useRef<View>(null);
   const hairline = [withAlpha(colors.onGradient, 0.16), withAlpha(colors.onGradient, 0.06), withAlpha(colors.onGradient, 0)] as const;
-  const onSheetLayout = (e: LayoutChangeEvent) => {
-    const h = Math.ceil(e.nativeEvent.layout.height);
-    if (h > 0) onLayout(h);
+  const measureTargets = () => {
     if (onTitleRect) titleRef.current?.measureInWindow((x, y, width, height) => onTitleRect({ x, y, width, height }));
     if (onGridRect) gridRef.current?.measureInWindow((x, y, width, height) => onGridRect({ x, y, width, height }));
   };
+  const onSheetLayout = (e: LayoutChangeEvent) => {
+    const h = Math.ceil(e.nativeEvent.layout.height);
+    if (h > 0) onLayout(h);
+    measureTargets();
+  };
+  const firstMeasure = useRef(true);
+  useEffect(() => {
+    if (firstMeasure.current) { firstMeasure.current = false; return; }
+    measureTargets();
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- rimisura solo quando cambia la chiave
+  }, [remeasure]);
   return (
     <View style={styles.sheet} onLayout={onSheetLayout} testID={`${prefix}-sheet`}>
       <View style={styles.sheetInner}>

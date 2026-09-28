@@ -192,8 +192,15 @@ pre-generati (storie, capitoli, copertine, audio TTS) distribuiti dal backend.
   partenza solo con scheda a misura (`sheetStable`). Chiusura da capitolo: `fadeIn` (200ms) poi rientro.
 - `deep-dive/[id].tsx`: `markReady` quando la card non cambia più altezza; `morphBack` da ogni sezione;
   `BackHandler` Android → stesso percorso inverso; copertina senza fade d'ingresso se `morph=1`.
-- Test `test_reports/iteration_2.json` (timeline morph PASS) e `iteration_3.json` (fix hook order:
-  apertura non-morph da URL/liste senza crash). Verifica su dispositivo reale ancora da fare dall'utente.
+- Bug segnalato dall'utente (app "inchiodata" al tap): la partenza aspettava un secondo onLayout della
+  scheda che su altezze da telefono (copertina limitata in altezza) non arriva mai (onLayout non si
+  ripete per un solo spostamento) → livello fermo a p=0 che assorbiva i tocchi. Fix: niente gate di
+  stabilità; `ReaderIntroSheet` prop `remeasure` (rimisura titolo/griglia quando cambia `cardH`), mete
+  "taggate" con la card corrente, commit lettore a 40% via setTimeout, `Easing.out(cubic)` 640ms,
+  rete di sicurezza assoluta 900ms (commit + dismiss), `markReady` via effect nel lettore, `sheetHint`
+  per la chiusura (stessa geometria dal primo fotogramma).
+- Test `iteration_2/3` (390×844) e `iteration_4.json` (390×700, 375×667, 390×844, 430×932: partenza
+  ≤ ~360ms, fine ≤ ~1.3s, handoff 0px, chiusura da intro e capitolo, nessun overlay bloccato).
 
 - Home: rimosso badge inferiore "Hai già letto X storie" (componente eliminato); nuovo contatore compatto nell'header (`home-read-counter`, icona libri 3D + numero da `completed_story_ids`) → tap apre `/read-stories` (riepilogo esistente della sessione). Card storie Home INVARIATE (tentativo di riduzione annullato su richiesta utente).
 - Tab Categorie: griglia a 4 colonne con tessere dense (prop `columns` di CategoryGrid/TopicPicker), tutto in una schermata senza scroll su 390x844. Onboarding non toccato (3 colonne).

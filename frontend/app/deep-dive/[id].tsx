@@ -132,8 +132,14 @@ export default function DeepDive() {
   // pieno): si misura la scheda sotto (titolo, intro, griglia, tasti) e la
   // card prende tutto il resto della pagina.
   const [sheetH, setSheetH] = useState(430);
-  const cardHFor = (s: number) => Math.max(150, Math.min(Math.round(cardW * 1.02), pageH - coverTop - pageBottom - s));
-  const cardH = cardHFor(sheetH);
+  const [sheetMeasured, setSheetMeasured] = useState(false);
+  const cardH = Math.max(150, Math.min(Math.round(cardW * 1.02), pageH - coverTop - pageBottom - sheetH));
+  // Arrivo dalla card della Home: dopo il primo layout della scheda la geometria
+  // (card + scheda) è quella definitiva ed è stata disegnata → il livello di
+  // transizione sopra può dissolversi appena finisce la sua corsa.
+  useEffect(() => {
+    if (morph === "1" && sheetMeasured) morphHost.markReady();
+  }, [morph, sheetMeasured, cardH, morphHost.markReady]);
   const cover: CoverFrame = { top: coverTop, left: (winW - columnW) / 2 + spacing.xl, width: cardW, height: cardH, radius: 22 };
   // Quota (nella pagina) del titolo grande: sotto la card, dopo il padding
   // della scheda. Da qui in su la barra col titolo piccolo resta nascosta,
@@ -343,7 +349,7 @@ export default function DeepDive() {
   const morphBack = (x: number) => {
     if (morph !== "1" || !backRect || morphHost.active || !router.canGoBack()) return false;
     navigation.setOptions({ animation: "none" });
-    morphHost.show(<StoryMorph direction="close" story={story} from={backRect} premium={isPremium} offsetX={x} fadeIn={section !== 0} onCommit={() => router.back()} />);
+    morphHost.show(<StoryMorph direction="close" story={story} from={backRect} premium={isPremium} offsetX={x} fadeIn={section !== 0} sheetHint={sheetH} onCommit={() => router.back()} />);
     return true;
   };
   morphBackRef.current = morphBack;
@@ -414,13 +420,7 @@ export default function DeepDive() {
             <ReaderIntroSheet story={story} compact={compact} reveal={headerReveal}
               onStart={() => { markTouched(); scrollToSection(1); }}
               listen={isPremium ? <IntroListenButton onListen={openAudio} style={styles.cta} /> : null}
-              onLayout={(h) => {
-                if (h !== sheetH) setSheetH(h);
-                // Arrivo dalla card della Home: la presentazione è disegnata e a misura
-                // (la card non cambia più altezza), il livello di transizione sopra può
-                // dissolversi appena finita la sua corsa.
-                if (morph === "1" && cardHFor(h) === cardH) morphHost.markReady();
-              }} />
+              onLayout={(h) => { if (h !== sheetH) setSheetH(h); setSheetMeasured(true); }} />
             </>)}
           </ReaderPage>
 

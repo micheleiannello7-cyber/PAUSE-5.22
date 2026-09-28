@@ -12,7 +12,7 @@ import { StyleSheet, View, useWindowDimensions } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { LinearGradient } from "expo-linear-gradient";
 import Ionicons from "@react-native-vector-icons/ionicons";
-import Animated, { Easing, Extrapolation, interpolate, runOnJS, useAnimatedReaction, useAnimatedStyle, useSharedValue, withTiming } from "react-native-reanimated";
+import Animated, { Easing, Extrapolation, interpolate, runOnJS, useAnimatedStyle, useSharedValue, withTiming } from "react-native-reanimated";
 
 import { StoryPreview } from "@/src/api";
 import { makeStyles, spacing, typography, useTheme, withAlpha } from "@/src/theme";
@@ -30,12 +30,12 @@ import { useMorphHost } from "./morph-host";
 export type MorphRect = SheetRect;
 
 export const MORPH_DURATION = 640;
-// Decelerazione decisa e continua (ease-out quintico): niente coda quasi ferma
-// alla fine, che faceva sembrare la transizione "bloccata" prima dello scambio.
-export const MORPH_EASING = Easing.bezier(0.22, 1, 0.36, 1);
-// Quota oltre la quale il fondo del livello è opaco: da qui il lettore vero può
-// montarsi sotto, invisibile, mentre l'animazione continua sul thread UI.
-const COMMIT_AT = 0.6;
+// Decelerazione continua (ease-out): niente coda quasi ferma alla fine, che
+// faceva sembrare la transizione "bloccata" prima dello scambio.
+export const MORPH_EASING = Easing.out(Easing.cubic);
+// Frazione della durata dopo la quale il fondo del livello è opaco (p ≈ 0.78):
+// da qui il lettore vero può montarsi sotto, invisibile, mentre l'animazione continua.
+const COMMIT_AT = 0.4;
 // Dissolvenza d'ingresso del livello quando si chiude da un capitolo (la
 // schermata sotto non è la presentazione): prima si torna alla copertina, poi
 // tutto rientra nella card.
@@ -47,7 +47,7 @@ const CLAMP = Extrapolation.CLAMP;
 const noop = () => {};
 const lerp = (p: number, a: number, b: number) => { "worklet"; return a + (b - a) * p; };
 
-export function StoryMorph({ story, from, premium, ready, onCommit, direction = "open", offsetX = 0, fadeIn = false }: {
+export function StoryMorph({ story, from, premium, ready, onCommit, direction = "open", offsetX = 0, fadeIn = false, sheetHint }: {
   story: StoryPreview;
   /** Cornice della card nella Home (coordinate finestra). */
   from: MorphRect;
@@ -62,6 +62,8 @@ export function StoryMorph({ story, from, premium, ready, onCommit, direction = 
   offsetX?: number;
   /** Chiusura da un capitolo: il livello (presentazione) compare in dissolvenza prima di rientrare nella card. */
   fadeIn?: boolean;
+  /** Chiusura: altezza della scheda già misurata dal lettore (stessa geometria dal primo fotogramma). */
+  sheetHint?: number;
 }) {
   const styles = useStyles();
   const { colors } = useTheme();
@@ -79,17 +81,22 @@ export function StoryMorph({ story, from, premium, ready, onCommit, direction = 
   const cardW = columnW - spacing.xl * 2;
   const coverTop = insets.top + spacing.lg;
   const pageBottom = insets.bottom + spacing.lg;
-  const [sheetH, setSheetH] = useState(430);
-  // La scheda è a misura: le mete di copertina, titolo e griglia sono definitive
-  // (la card non cambia più altezza) e solo allora la corsa può partire.
-  const [sheetStable, setSheetStable] = useState(false);
-  const cardHFor = (s: number) => Math.max(150, Math.min(Math.round(cardW * 1.02), winH - coverTop - pageBottom - s));
-  const cardH = cardHFor(sheetH);
+  const [sheetH, setSheetH] = useState(sheetHint ?? 430);
+  const [sheetMeasured, setSheetMeasured] = useState(false);
+  const cardH = Math.max(150, Math.min(Math.round(cardW * 1.02), winH - coverTop - pageBottom - sheetH));
   const to: MorphRect = { x: (winW - columnW) / 2 + spacing.xl, y: coverTop, width: cardW, height: cardH };
 
-  // Dove atterrano titolo e griglia: misurati sui segnaposto della scheda.
-  const [titleTo, setTitleTo] = useState<MorphRect | null>(null);
-  const [gridTo, setGridTo] = useState<MorphRect | null>(null);
+  // Dove atterrano titolo e griglia: misurati sui segnaposto della scheda. Quando
+  // la card cambia altezza la scheda si sposta senza un nuovo onLayout: la scheda
+  // rimisura (prop `remeasure`) e si accettano solo le misure prese con la card
+  // corrente (`cardHRef`), così le mete sono sempre quelle della geometria finale.
+  type Target = MorphRect & { forCardH: number };
+  const [titleTo, setTitleTo] = useState<Target | null>(null);
+  const [gridTo, setGridTo] = useState<Target | null>(null);
+  const cardHRef = useRef(cardH);
+  cardHRef.current = cardH;
+  const acceptTitle = (r: MorphRect) => { if (cardH === cardHRef.current) setTitleTo({ ...r, forCardH: cardH }); };
+  const acceptGrid = (r: MorphRect) => { if (cardH === cardHRef.current) setGridTo({ ...r, forCardH: cardH }); };
   const [cardTitleH, setCardTitleH] = useState(0);
   const titleW = from.width - CARD_PAD * 2 - (premium ? LISTEN_W : 0);
   const titleFrom = { x: from.x + CARD_PAD, y: from.y + from.height - CARD_PAD - cardTitleH };
@@ -107,26 +114,23 @@ export function StoryMorph({ story, from, premium, ready, onCommit, direction = 
   const coverShift = { x: from.x + from.width / 2 - (to.x + to.width / 2), y: from.y + from.height / 2 - (to.y + to.height / 2) };
   const coverScale = { x: from.width / to.width, y: from.height / to.height };
 
-  const measured = !!titleTo && !!gridTo && cardTitleH > 0 && sheetStable;
+  const measured = sheetMeasured && titleTo?.forCardH === cardH && gridTo?.forCardH === cardH && cardTitleH > 0;
   const [animDone, setAnimDone] = useState(false);
   const [dataReady, setDataReady] = useState(false);
   const [pastCommit, setPastCommit] = useState(false);
   const started = useRef(false);
   const committed = useRef(false);
   useEffect(() => { if (ready) ready.then(() => setDataReady(true), () => setDataReady(true)); else setDataReady(true); }, [ready]);
-  // Apertura: parte appena si sa dove atterrano titolo e griglia.
+  // Apertura: parte appena si sa dove atterrano titolo e griglia. Il fondo è
+  // opaco da metà corsa: da lì (COMMIT_AT della durata) il lettore vero si monta
+  // sotto, invisibile, mentre la copertina finisce di posarsi.
   useEffect(() => {
     if (closing || !measured || started.current) return;
     started.current = true;
     p.value = withTiming(1, { duration: MORPH_DURATION, easing: MORPH_EASING }, (done) => { if (done) runOnJS(setAnimDone)(true); });
+    const timer = setTimeout(() => setPastCommit(true), MORPH_DURATION * COMMIT_AT);
+    return () => clearTimeout(timer);
   }, [closing, measured, p]);
-  // Il fondo è opaco da COMMIT_AT: il lettore si monta sotto mentre la copertina
-  // finisce di posarsi (l'animazione gira sul thread UI, il montaggio su JS).
-  useAnimatedReaction(
-    () => p.value >= COMMIT_AT,
-    (past, prev) => { if (past && !prev) runOnJS(setPastCommit)(true); },
-    [],
-  );
   useEffect(() => {
     if (closing || !pastCommit || !dataReady || committed.current) return;
     committed.current = true;
@@ -135,12 +139,24 @@ export function StoryMorph({ story, from, premium, ready, onCommit, direction = 
     const timer = setTimeout(host.dismiss, 2500);
     return () => clearTimeout(timer);
   }, [closing, pastCommit, dataReady, onCommit, host.dismiss]);
-  // Scambio solo quando l'animazione è finita E il lettore sotto è disegnato e
-  // stabile (host.ready): mai una dissolvenza a metà corsa, mai un salto.
+  // Scambio solo quando l'animazione è finita E il lettore sotto è disegnato
+  // (host.ready): mai una dissolvenza a metà corsa, mai un salto.
   useEffect(() => {
     if (closing || !animDone || !host.ready) return;
     host.dismiss();
   }, [closing, animDone, host.ready, host.dismiss]);
+  // Rete di sicurezza assoluta: se la geometria non arriva (layout mai stabile),
+  // si passa comunque di là e il livello si toglie: mai un'app bloccata.
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      if (started.current) return;
+      started.current = true;
+      committed.current = true;
+      onCommit();
+      host.dismiss();
+    }, 900);
+    return () => clearTimeout(timer);
+  }, [onCommit, host.dismiss]);
   // Chiusura: il livello è già identico alla presentazione (o vi si dissolve
   // sopra, arrivando da un capitolo); sotto si torna alla Home (senza
   // animazione nativa) e poi tutto rientra nella card.
@@ -217,7 +233,7 @@ export function StoryMorph({ story, from, premium, ready, onCommit, direction = 
             <View style={{ height: cardH, width: cardW, alignSelf: "center" }} />
             <ReaderIntroSheet story={story} compact={compact} reveal={still} onStart={noop} prefix="story-morph" ghost={floatingReady} partsStyle={partsStyle} flat
               listen={premium ? <IntroCtaButton icon="headphones" label={t.audio_listen_short} onPress={noop} testID="story-morph-listen" style={styles.cta} flat /> : null}
-              onLayout={(h) => { if (h !== sheetH) setSheetH(h); if (cardHFor(h) === cardH) setSheetStable(true); }} onTitleRect={setTitleTo} onGridRect={setGridTo} />
+              onLayout={(h) => { if (h !== sheetH) setSheetH(h); setSheetMeasured(true); }} remeasure={cardH} onTitleRect={acceptTitle} onGridRect={acceptGrid} />
           </>)}
         </ReaderPage>
       </View>
